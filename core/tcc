@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+TCC - Trinity Cortex CLI Simplificado
+Comando directo para acceder a Trinity Cortex desde cualquier chat
+"""
+
+import sys
+import requests
+import json
+import os
+from datetime import datetime
+
+# Configuración
+TRINITY_PORT = 7777  # Puerto donde corre Trinity 8K
+TRINITY_HOST = "localhost"
+CACHE_FILE = os.path.expanduser("~/.tcc_cache.json")
+
+def query_trinity(query_text):
+    """Consulta directa a Trinity Cortex"""
+    try:
+        # Intentar puerto 7777 primero (8K docs)
+        response = requests.get(
+            f"http://{TRINITY_HOST}:{TRINITY_PORT}/search",
+            params={"q": query_text, "k": 5},
+            timeout=2
+        )
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            # Fallback a puerto 7778
+            response = requests.get(
+                f"http://{TRINITY_HOST}:7778/search",
+                params={"q": query_text, "k": 5},
+                timeout=2
+            )
+            if response.status_code == 200:
+                return response.json()
+    except:
+        pass
+    
+    # Si Trinity no responde, buscar en cache
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'r') as f:
+            cache = json.load(f)
+            if query_text.lower() in str(cache).lower():
+                return {"source": "cache", "data": cache.get(query_text, "No data")}
+    
+    return None
+
+def save_to_cache(key, value):
+    """Guardar en cache local"""
+    cache = {}
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'r') as f:
+            cache = json.load(f)
+    
+    cache[key] = {
+        "value": value,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    with open(CACHE_FILE, 'w') as f:
+        json.dump(cache, f, indent=2)
+
+def main():
+    if len(sys.argv) < 2:
+        print("Uso: tcc <query>")
+        print("Ejemplo: tcc 'estado del proyecto fintech'")
+        sys.exit(1)
+    
+    # Unir todos los argumentos como query
+    query = ' '.join(sys.argv[1:])
+    
+    # Quitar el --description que agrega Claude Code
+    query = query.replace('--description', '').strip()
+    
+    # Buscar en Trinity
+    results = query_trinity(query)
+    
+    if results:
+        print(f"🔍 Trinity Cortex - Query: {query}")
+        print("=" * 50)
+        
+        if isinstance(results, dict) and "results" in results:
+            # Formato de Trinity real
+            for i, result in enumerate(results["results"][:3], 1):
+                print(f"\n[{i}] {result.get('source', 'Unknown')}")
+                print(f"    {result.get('content', '')[:200]}...")
+        elif isinstance(results, list):
+            # Formato alternativo
+            for i, result in enumerate(results[:3], 1):
+                print(f"\n[{i}] {result.get('path', 'Unknown')}")
+                print(f"    {result.get('text', '')[:200]}...")
+        else:
+            # Formato cache o fallback
+            print(json.dumps(results, indent=2))
+    else:
+        # Respuesta básica si Trinity no está disponible
+        print(f"⚠️ Trinity Cortex no disponible")
+        print(f"Query guardada en cache: {query}")
+        save_to_cache(query, "Pendiente de respuesta")
+
+if __name__ == "__main__":
+    main()
